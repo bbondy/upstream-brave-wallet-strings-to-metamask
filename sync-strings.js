@@ -12,9 +12,10 @@ const getLangStringsMap = (dir, filterLangsFn = filterLangs) => {
   const langStringsMap = {}
   fs.readdirSync(dir)
     .filter(filterLangsFn)
+    // Skip the source lang
     .forEach((lang) => {
       const langPath = path.join(dir, lang, 'messages.json')
-      const langMap = JSON.parse(fs.readFileSync(langPath, 'utf8'))
+      const langMap = fs.existsSync(langPath) ? JSON.parse(fs.readFileSync(langPath, 'utf8')) : {}
       langStringsMap[lang] = {}
       Object.keys(langMap).forEach((key) => {
         langStringsMap[lang][key] = langMap[key].message
@@ -24,13 +25,16 @@ const getLangStringsMap = (dir, filterLangsFn = filterLangs) => {
 }
 
 const filterLangs = (lang) =>
-  !['index.json', 'en'].includes(lang)
+  !['index.json'].includes(lang)
 
-const syncLangStrings = (destDir, sourceLangStringsMap, destLangStringsMap) => {
+const syncLangStrings = (sourceDir, destDir, sourceLangStringsMap, destLangStringsMap) => {
   fs.readdirSync(destDir)
     .filter(filterLangs)
+    // Skip the source lang
+    .filter((lang) => lang !== 'en')
     .forEach((lang) => {
-      const langPath = path.join(destDir, lang, 'messages.json')
+      const sourceLangPath = path.join(sourceDir, lang, 'messages.json')
+      const destLangPath = path.join(destDir, lang, 'messages.json')
       // Create a lang map which is the entire dest dir content
       // this might get overwritten if the dest file already exists
       let langMap = Object.keys(sourceLangStringsMap[lang]).reduce((acc, cur) => {
@@ -40,8 +44,8 @@ const syncLangStrings = (destDir, sourceLangStringsMap, destLangStringsMap) => {
         return acc
       }, {})
       let newFile = true
-      if (fs.existsSync(langPath)) {
-        langMap = JSON.parse(fs.readFileSync(langPath, 'utf8'))
+      if (fs.existsSync(sourceLangPath)) {
+        langMap = JSON.parse(fs.readFileSync(sourceLangPath, 'utf8'))
         newFile = false
       }
       Object.keys(langMap).forEach((key) => {
@@ -55,18 +59,20 @@ const syncLangStrings = (destDir, sourceLangStringsMap, destLangStringsMap) => {
           delete langMap[key]
         }
       })
-      // MetaMask prefers not to have this.
-      /*
-      // Make sure we have English strings for any string that's missing
-      Object.keys(destLangStringsMap.en).forEach((key) => {
-        if (!langMap[key]) {
-          langMap[key] = { message: destLangStringsMap.en[key] }
-        }
-      })
-      */
+      // Re-add any removed translations that we didn't have in our source string
+      if (destLangStringsMap[lang]) {
+        Object.keys(destLangStringsMap.en).forEach((key) => {
+          if (!langMap[key] && destLangStringsMap[lang][key]) {
+            langMap[key] = { message: destLangStringsMap[lang][key] }
+          }
+          // Also remove if the string matches the English locale
+          if (langMap[key] && langMap[key].message === sourceLangStringsMap.en[key]) {
+            delete langMap[key]
+          }
+        })
+      }
       const data = JSON.stringify(langMap, null, 2)
-      console.log('writing lang path is: ', langPath)
-      fs.writeFileSync(langPath, data + '\n', 'utf8')
+      fs.writeFileSync(destLangPath, data + '\n', 'utf8')
     })
 }
 
@@ -83,7 +89,6 @@ const syncDirs = (destDir, sourceLangs) => {
   sourceLangs.forEach((lang) => {
     const dir = path.join(destDir, lang)
     if (!fs.existsSync(dir)) {
-      console.log('creating new dir: ', dir)
       fs.mkdirSync(dir)
     }
   })
@@ -97,16 +102,13 @@ const syncStrings = (sourceDir, destDir) => {
   assertDirExists(destDir)
 
   const sourceLangStringsMap = getLangStringsMap(sourceDir)
-  const destLangStringsMap = getLangStringsMap(destDir, (lang) => lang === 'en')
+  const destLangStringsMap = getLangStringsMap(destDir)
   const sourceLangs = Object.keys(sourceLangStringsMap)
 
   syncDirs(destDir, sourceLangs)
-  syncLangStrings(destDir, sourceLangStringsMap, destLangStringsMap)
+  syncLangStrings(sourceDir, destDir, sourceLangStringsMap, destLangStringsMap)
 
   console.log(`Syncing from sourceDir: ${sourceDir} to destDir: ${destDir}`)
-
-  // Read in all strings for all languages from sourceDir
-  // Read in all strings for all languges from destDir
 }
 
 module.exports = syncStrings
